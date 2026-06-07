@@ -155,10 +155,11 @@ def run_trace_demo(
     ])
 
 
-def run_lock_demo(product_id='sku-1', task=None):
+def run_lock_demo(product_id='sku-1', task=None, start_gap_seconds=0.2):
     task = task or update_inventory
 
     first = task.delay(product_id=product_id, quantity=5, hold_seconds=2)
+    sleep(start_gap_seconds)
     second = task.delay(product_id=product_id, quantity=7, hold_seconds=0)
 
     first_result = first.get(timeout=10)

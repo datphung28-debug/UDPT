@@ -111,6 +111,8 @@ The first task holds the product lock briefly. With two workers, the second
 task attempts to enter the same critical section and is skipped because the
 lock is already owned.
 
+Captured verification output and known limitations are in `DEMO_OUTPUT.md`.
+
 ## Files
 
 - `app.py`: Celery application and Redis configuration.
@@ -118,3 +120,4 @@ lock is already owned.
 - `tracing.py`: Trace context, event models, and trace recorders.
 - `show_trace.py`: CLI for printing a compact trace timeline.
 - `singleton.py`: Redis distributed lock helper and singleton task wrapper.
+- `DEMO_OUTPUT.md`: Captured test output, manual demo output, and limitations.

@@ -53,10 +53,18 @@ def test_run_trace_demo_dispatches_task_and_prints_timeline(capsys):
     assert output == capsys.readouterr().out.rstrip()
 
 
-def test_run_lock_demo_dispatches_two_inventory_tasks_for_same_product(capsys):
+def test_run_lock_demo_dispatches_two_inventory_tasks_for_same_product(
+    monkeypatch,
+    capsys,
+):
     task = FakeTask(
         'inventory-task',
         {'status': 'updated', 'product_id': 'sku-1', 'quantity': 5},
+    )
+    sleeps = []
+    monkeypatch.setattr(
+        'examples.distributed_features.tasks.sleep',
+        lambda seconds: sleeps.append(seconds),
     )
 
     output = run_lock_demo(
@@ -64,6 +72,7 @@ def test_run_lock_demo_dispatches_two_inventory_tasks_for_same_product(capsys):
         task=task,
     )
 
+    assert sleeps == [0.2]
     assert task.delay_calls == [
         ((), {'product_id': 'sku-1', 'quantity': 5, 'hold_seconds': 2}),
         ((), {'product_id': 'sku-1', 'quantity': 7, 'hold_seconds': 0}),
