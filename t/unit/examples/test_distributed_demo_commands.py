@@ -104,5 +104,4 @@ def test_main_routes_lock_demo_command(monkeypatch):
     )
 
     main(['run-lock-demo'])
-
     assert calls == ['lock']
