@@ -2,7 +2,9 @@ from examples.distributed_features.singleton import (
     LockAcquireResult,
     LockReleaseResult,
     RedisDistributedLock,
+    singleton_task,
 )
+from examples.distributed_features.tasks import update_inventory
 
 
 class FakeRedis:
@@ -127,3 +129,116 @@ def test_release_reports_not_owner_when_lock_is_missing():
     )
 
     assert lock.release() == LockReleaseResult.NOT_OWNER
+
+
+def test_singleton_task_runs_function_when_lock_is_acquired():
+    redis_client = FakeRedis()
+    calls = []
+
+    @singleton_task(
+        lock_key_template='inventory:{product_id}',
+        ttl=30,
+        redis_client_factory=lambda: redis_client,
+    )
+    def update_inventory(product_id, quantity):
+        calls.append((product_id, quantity))
+        return {'status': 'updated', 'product_id': product_id}
+
+    result = update_inventory('sku-1', 5)
+
+    assert result == {'status': 'updated', 'product_id': 'sku-1'}
+    assert calls == [('sku-1', 5)]
+    assert redis_client.set_calls == [
+        ('inventory:sku-1', update_inventory.lock.owner_token, True, 30),
+    ]
+    assert redis_client.delete_calls == ['inventory:sku-1']
+
+
+def test_singleton_task_returns_skipped_result_when_lock_is_not_acquired():
+    redis_client = FakeRedis()
+    redis_client.values['inventory:sku-1'] = 'worker-1'
+    calls = []
+
+    @singleton_task(
+        lock_key_template='inventory:{product_id}',
+        ttl=30,
+        redis_client_factory=lambda: redis_client,
+    )
+    def update_inventory(product_id, quantity):
+        calls.append((product_id, quantity))
+        return {'status': 'updated'}
+
+    result = update_inventory('sku-1', 5)
+
+    assert result == {
+        'status': 'skipped',
+        'reason': 'lock_not_acquired',
+        'lock_key': 'inventory:sku-1',
+    }
+    assert calls == []
+    assert redis_client.delete_calls == []
+
+
+def test_singleton_task_releases_lock_when_wrapped_function_raises():
+    redis_client = FakeRedis()
+
+    @singleton_task(
+        lock_key_template='inventory:{product_id}',
+        ttl=30,
+        redis_client_factory=lambda: redis_client,
+    )
+    def update_inventory(product_id, quantity):
+        raise RuntimeError('database unavailable')
+
+    try:
+        update_inventory(product_id='sku-1', quantity=5)
+    except RuntimeError as exc:
+        assert str(exc) == 'database unavailable'
+    else:
+        raise AssertionError('expected RuntimeError')
+
+    assert redis_client.delete_calls == ['inventory:sku-1']
+
+
+def test_singleton_task_uses_different_locks_for_different_arguments():
+    redis_client = FakeRedis()
+
+    @singleton_task(
+        lock_key_template='inventory:{product_id}',
+        ttl=30,
+        redis_client_factory=lambda: redis_client,
+    )
+    def update_inventory(product_id, quantity):
+        return {'status': 'updated', 'product_id': product_id}
+
+    assert update_inventory(product_id='sku-1', quantity=5) == {
+        'status': 'updated',
+        'product_id': 'sku-1',
+    }
+    assert update_inventory(product_id='sku-2', quantity=5) == {
+        'status': 'updated',
+        'product_id': 'sku-2',
+    }
+    assert [call[0] for call in redis_client.set_calls] == [
+        'inventory:sku-1',
+        'inventory:sku-2',
+    ]
+
+
+def test_update_inventory_demo_task_uses_singleton_wrapper(monkeypatch):
+    redis_client = FakeRedis()
+
+    monkeypatch.setattr(
+        'examples.distributed_features.tasks.create_default_lock_client',
+        lambda: redis_client,
+    )
+
+    result = update_inventory.run(product_id='sku-1', quantity=5)
+
+    assert result == {
+        'status': 'updated',
+        'product_id': 'sku-1',
+        'quantity': 5,
+    }
+    assert redis_client.set_calls[0][0] == 'inventory:sku-1'
+    assert redis_client.delete_calls == ['inventory:sku-1']

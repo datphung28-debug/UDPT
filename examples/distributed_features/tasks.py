@@ -1,4 +1,5 @@
 from examples.distributed_features.app import RESULT_BACKEND, app
+from examples.distributed_features.singleton import singleton_task
 from examples.distributed_features.tracing import (
     InMemoryTraceRecorder,
     RedisTraceRecorder,
@@ -25,6 +26,30 @@ def create_default_trace_recorder():
         return InMemoryTraceRecorder()
 
     return RedisTraceRecorder(Redis.from_url(RESULT_BACKEND))
+
+
+def create_default_lock_client():
+    from redis import Redis
+
+    return Redis.from_url(RESULT_BACKEND)
+
+
+@singleton_task(
+    lock_key_template='inventory:{product_id}',
+    ttl=30,
+    redis_client_factory=lambda: create_default_lock_client(),
+)
+def _update_inventory(product_id, quantity):
+    return {
+        'status': 'updated',
+        'product_id': product_id,
+        'quantity': quantity,
+    }
+
+
+@app.task(name='distributed_features.update_inventory')
+def update_inventory(product_id, quantity):
+    return _update_inventory(product_id=product_id, quantity=quantity)
 
 
 def _merge_context_clock(context, observed_context):

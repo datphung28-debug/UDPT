@@ -1,3 +1,5 @@
+from functools import wraps
+from inspect import signature
 from enum import Enum
 from uuid import uuid4
 
@@ -45,3 +47,37 @@ class RedisDistributedLock:
         if isinstance(value, bytes):
             return value.decode()
         return value
+
+
+def singleton_task(lock_key_template, ttl, redis_client_factory):
+    def decorator(func):
+        task_signature = signature(func)
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            bound_arguments = task_signature.bind(*args, **kwargs)
+            bound_arguments.apply_defaults()
+            lock_key = lock_key_template.format(**bound_arguments.arguments)
+            lock = RedisDistributedLock(
+                redis_client_factory(),
+                lock_key,
+                ttl,
+            )
+            wrapper.lock = lock
+
+            if lock.acquire() != LockAcquireResult.ACQUIRED:
+                return {
+                    'status': 'skipped',
+                    'reason': 'lock_not_acquired',
+                    'lock_key': lock_key,
+                }
+
+            try:
+                return func(*args, **kwargs)
+            finally:
+                lock.release()
+
+        wrapper.lock = None
+        return wrapper
+
+    return decorator
