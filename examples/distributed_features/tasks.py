@@ -1,4 +1,11 @@
+import argparse
+from time import sleep
+
 from examples.distributed_features.app import RESULT_BACKEND, app
+from examples.distributed_features.show_trace import (
+    format_trace_timeline,
+    load_trace_timeline,
+)
 from examples.distributed_features.singleton import singleton_task
 from examples.distributed_features.tracing import (
     InMemoryTraceRecorder,
@@ -39,7 +46,10 @@ def create_default_lock_client():
     ttl=30,
     redis_client_factory=lambda: create_default_lock_client(),
 )
-def _update_inventory(product_id, quantity):
+def _update_inventory(product_id, quantity, hold_seconds=0):
+    if hold_seconds:
+        sleep(hold_seconds)
+
     return {
         'status': 'updated',
         'product_id': product_id,
@@ -48,8 +58,12 @@ def _update_inventory(product_id, quantity):
 
 
 @app.task(name='distributed_features.update_inventory')
-def update_inventory(product_id, quantity):
-    return _update_inventory(product_id=product_id, quantity=quantity)
+def update_inventory(product_id, quantity, hold_seconds=0):
+    return _update_inventory(
+        product_id=product_id,
+        quantity=quantity,
+        hold_seconds=hold_seconds,
+    )
 
 
 def _merge_context_clock(context, observed_context):
@@ -114,5 +128,69 @@ def run_basic_demo():
     print(f'Result: {result.get(timeout=10)}')
 
 
+def _print_and_return(lines):
+    output = '\n'.join(lines)
+    print(output)
+    return output
+
+
+def run_trace_demo(
+    order_id='order-1',
+    trace_id='order-1-trace',
+    task=None,
+    recorder=None,
+):
+    task = task or process_order
+    recorder = recorder or create_default_trace_recorder()
+
+    result = task.delay(order_id, trace_id=trace_id)
+    task_result = result.get(timeout=10)
+    events = load_trace_timeline(recorder, trace_id)
+
+    return _print_and_return([
+        f'Dispatching distributed_features.process_order({order_id!r})',
+        f'Task id: {result.id}',
+        f'Result: {task_result}',
+        format_trace_timeline(trace_id, events),
+    ])
+
+
+def run_lock_demo(product_id='sku-1', task=None):
+    task = task or update_inventory
+
+    first = task.delay(product_id=product_id, quantity=5, hold_seconds=2)
+    second = task.delay(product_id=product_id, quantity=7, hold_seconds=0)
+
+    first_result = first.get(timeout=10)
+    second_result = second.get(timeout=10)
+
+    return _print_and_return([
+        f'Dispatching two update_inventory tasks for {product_id}',
+        f'First task id: {first.id}',
+        f'Second task id: {second.id}',
+        f'First result: {first_result}',
+        f'Second result: {second_result}',
+    ])
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description='Run distributed feature demos.',
+    )
+    parser.add_argument(
+        'command',
+        nargs='?',
+        default='basic',
+        choices=['basic', 'run-trace-demo', 'run-lock-demo'],
+    )
+    args = parser.parse_args(argv)
+
+    if args.command == 'run-trace-demo':
+        return run_trace_demo()
+    if args.command == 'run-lock-demo':
+        return run_lock_demo()
+    return run_basic_demo()
+
+
 if __name__ == '__main__':
-    run_basic_demo()
+    main()
