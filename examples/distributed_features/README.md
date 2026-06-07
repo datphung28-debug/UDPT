@@ -56,7 +56,40 @@ Task id: <uuid>
 Result: 5
 ```
 
+## Run The Trace Timeline Demo
+
+Start Redis and a worker first. Then dispatch the traced order workflow with a
+trace id:
+
+```bash
+python - <<'PY'
+from examples.distributed_features.tasks import process_order
+
+result = process_order.delay('order-1', trace_id='order-1-trace')
+print(result.get(timeout=10))
+PY
+```
+
+Print the timeline stored in Redis:
+
+```bash
+python examples/distributed_features/show_trace.py order-1-trace
+```
+
+Expected output shape:
+
+```text
+trace_id: order-1-trace
+[1] started process-order on worker-process
+[2] sent process-order on worker-process
+[4] started validate-order on worker-validate parent=process-order
+[5] success validate-order on worker-validate parent=process-order
+[6] success process-order on worker-process
+```
+
 ## Files
 
 - `app.py`: Celery application and Redis configuration.
 - `tasks.py`: Basic tasks used to verify the demo app skeleton.
+- `tracing.py`: Trace context, event models, and trace recorders.
+- `show_trace.py`: CLI for printing a compact trace timeline.
