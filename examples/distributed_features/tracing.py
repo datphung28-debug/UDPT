@@ -1,5 +1,7 @@
-from dataclasses import asdict, dataclass
+import json
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
+from operator import attrgetter
 from typing import Optional
 from uuid import uuid4
 
@@ -27,6 +29,43 @@ class TraceEvent:
         payload = asdict(self)
         payload['timestamp'] = self.timestamp.isoformat()
         return payload
+
+
+class InMemoryTraceRecorder:
+    def __init__(self):
+        self._events = {}
+
+    def record(self, event):
+        self._events.setdefault(event.trace_id, []).append(event)
+
+    def events_for_trace(self, trace_id):
+        events = self._events.get(trace_id, [])
+        return sorted(events, key=attrgetter('logical_clock', 'timestamp'))
+
+
+class RedisTraceRecorder:
+    def __init__(self, redis_client, key_prefix='trace'):
+        self.redis_client = redis_client
+        self.key_prefix = key_prefix
+
+    def record(self, event):
+        self.redis_client.rpush(
+            self._key_for_trace(event.trace_id),
+            json.dumps(event.to_dict()),
+        )
+
+    def events_for_trace(self, trace_id):
+        raw_events = self.redis_client.lrange(self._key_for_trace(trace_id), 0, -1)
+        events = [trace_event_from_dict(json.loads(self._decode(raw))) for raw in raw_events]
+        return sorted(events, key=attrgetter('logical_clock', 'timestamp'))
+
+    def _key_for_trace(self, trace_id):
+        return f'{self.key_prefix}:{trace_id}:events'
+
+    def _decode(self, value):
+        if isinstance(value, bytes):
+            return value.decode()
+        return value
 
 
 def next_logical_clock(current_clock):
@@ -68,3 +107,21 @@ def create_trace_event(context, event, timestamp=None):
         logical_clock=next_logical_clock(context.logical_clock),
         timestamp=timestamp or datetime.now(timezone.utc),
     )
+
+
+def trace_event_from_dict(payload):
+    return TraceEvent(
+        trace_id=payload['trace_id'],
+        parent_task_id=payload['parent_task_id'],
+        task_id=payload['task_id'],
+        worker_id=payload['worker_id'],
+        event=payload['event'],
+        logical_clock=payload['logical_clock'],
+        timestamp=datetime.fromisoformat(payload['timestamp']),
+    )
+
+
+def record_trace_event(recorder, context, event, timestamp=None):
+    trace_event = create_trace_event(context, event, timestamp=timestamp)
+    recorder.record(trace_event)
+    return replace(context, logical_clock=trace_event.logical_clock)
