@@ -32,7 +32,6 @@ class FakeRedis:
         self.delete_calls.append(key)
         self.values.pop(key, None)
 
-
 def test_acquire_uses_redis_set_nx_ex_and_stores_owner_token():
     redis_client = FakeRedis()
     lock = RedisDistributedLock(redis_client, 'inventory:sku-1', ttl=30)
@@ -44,7 +43,6 @@ def test_acquire_uses_redis_set_nx_ex_and_stores_owner_token():
         ('inventory:sku-1', lock.owner_token, True, 30),
     ]
     assert redis_client.values['inventory:sku-1'] == lock.owner_token
-
 
 def test_second_worker_cannot_acquire_owned_lock():
     redis_client = FakeRedis()
@@ -86,7 +84,6 @@ def test_release_fails_when_lock_is_owned_by_another_worker():
     assert other.release() == LockReleaseResult.NOT_OWNER
     assert redis_client.values['inventory:sku-1'] == 'worker-1'
     assert redis_client.delete_calls == []
-
 
 def test_release_deletes_lock_when_owner_token_matches():
     redis_client = FakeRedis()
